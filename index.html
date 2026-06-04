@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>教會報到系統</title>
+    <!-- 引入 Firebase SDK - 建議使用最新的 CDN 連結 -->
+    <!-- Firebase core SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <!-- Firebase Realtime Database SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+    <!-- Firebase Authentication SDK (如果需要使用者登入，請加入) -->
+    <!-- <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script> -->
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f4f4f4;
+            color: #333;
+        }
+        h1, h2 {
+            color: #0056b3;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        .group-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .group-card {
+            background-color: #e9f5ff;
+            border: 1px solid #cce5ff;
+            border-radius: 5px;
+            padding: 15px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+        }
+        .group-card h3 {
+            margin-top: 0;
+            color: #004085;
+            border-bottom: 1px solid #b8daff;
+            padding-bottom: 5px;
+            margin-bottom: 10px;
+        }
+        .group-card ul {
+            list-style: none;
+            padding: 0;
+        }
+        .group-card li {
+            padding: 5px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .group-card li.checked-in {
+            color: green;
+            font-weight: bold;
+        }
+        .group-card li.checked-in::after {
+            content: "✓ 已簽到";
+            color: green;
+            font-size: 0.8em;
+        }
+        .checkin-btn {
+            background-color: #28a745;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+        .checkin-btn:hover {
+            background-color: #218838;
+        }
+        .checkin-btn:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        #initialDataStatus {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #fff3cd;
+            border: 1px solid #ffeeba;
+            border-radius: 4px;
+            color: #856404;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>教會一樓報到處空間與名單整理</h1>
+        <p>為您將報到資訊與名單整理如下，方便您當天確認與安排動線：</p>
+
+        <h2>一、 報到平面圖概念</h2>
+        <p>地點：教會一樓空間<br>
+        動線安排：現場共分為 17 排。建議可以在前方設置報到處，並向後拉出 17 條排隊動線（或擺放 17 排等候座位/地標），標示出「第 1 組」至「第 17 組」，讓參與者一到場就能依照自己的組別對應入列，加快報到速度。</p>
+
+        <h2>二、 分組報到名單總表</h2>
+        <div id="initialDataStatus">正在檢查初始資料...</div>
+        <div id="groupList" class="group-list">
+            <!-- 名單將由 JavaScript 動態載入 -->
+            <p>載入中...</p>
+        </div>
+    </div>
+
+    <script>
+        // 您的 Firebase 配置資訊
+        // 請務必將這些 'YOUR_...' 替換成您在 Firebase 控制台「專案設定」中找到的實際值
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY", // 範例: "AIzaSyC..."
+            authDomain: "the-way-d0948.firebaseapp.com",
+            databaseURL: "https://the-way-d0948-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "the-way-d0948",
+            storageBucket: "the-way-d0948.appspot.com",
+            messagingSenderId: "YOUR_MESSAGING_SENDER_ID", // 範例: "548565004338"
+            appId: "YOUR_APP_ID" // 範例: "1:548565004338:web:abcdef1234567890abcdef"
+        };
+
+        // 初始化 Firebase 應用程式
+        const app = firebase.initializeApp(firebaseConfig);
+
+        // 取得 Realtime Database 服務的參考
+        const database = firebase.database();
+
+        // Realtime Database 中儲存分組名單的路徑
+        const groupsRef = database.ref('groups');
+
+        // 報到狀態的路徑 (假設每個參與者的報到狀態儲存在 checkedIn/參與者姓名 之下)
+        const checkedInRef = database.ref('checkedIn');
+
+        // 初始分組名單資料
+        const initialRegistrationData = {
+            "group1": ["承欣", "賴又恩"],
+            "group2": ["許艾豊", "蔡羽暘"],
+            "group3": ["葉詠心", "張嘉恩"],
+            "group4": ["吳悅加", "星霖/宇希"],
+            "group5": ["陳恩萱", "朱思潔"],
+            "group6": ["周品安", "張璿", "佩玲"],
+            "group7": ["蔡語晴", "黃馨緯", "李星澄"],
+            "group8": ["劉心", "陳蕾伊", "黃恬欣"],
+            "group9": ["李牧禧", "班藹然", "蒔語"],
+            "group10": ["吳曦恩", "曾語潔", "甘忻淋"],
+            "group11": ["林恩誠", "蔡亞冕", "王倢恩"],
+            "group12": ["葉祈心", "曾愛允", "羅子芸"],
+            "group13": ["陳沛恩", "蔡俐欣", "劉于瑄"],
+            "group14": ["周筠潔", "秀汕", "李思澄"],
+            "group15": ["鍾欣儒", "王郁淇", "林歆美"],
+            "group16": ["陳宥喬", "陳品榛", "林品蓁"],
+            "group17": ["黃頌恩", "許歡欣", "周奕瑾", "吳欣儒", "張童恩"]
+        };
+
+        const initialDataStatusElem = document.getElementById('initialDataStatus');
+
+        // 檢查並寫入初始資料（如果資料庫中沒有）
+        groupsRef.once('value', (snapshot) => {
+            if (!snapshot.exists()) {
+                // 如果 'groups' 節點不存在，則寫入初始資料
+                groupsRef.set(initialRegistrationData)
+                    .then(() => {
+                        console.log("初始分組名單已成功寫入資料庫。");
+                        initialDataStatusElem.textContent = "初始資料已成功寫入資料庫。";
+                    })
+                    .catch((error) => {
+                        console.error("寫入初始資料時發生錯誤:", error);
+                        initialDataStatusElem.textContent = `寫入初始資料時發生錯誤: ${error.message}`;
+                    });
+            } else {
+                initialDataStatusElem.textContent = "資料庫中已存在分組名單，跳過初始寫入。";
+            }
+        });
+
+
+        // 監聽 Realtime Database 中 'groups' 和 'checkedIn' 節點的資料變化
+        // 當資料變更時，會自動更新網頁顯示
+        groupsRef.on('value', (groupSnapshot) => {
+            checkedInRef.on('value', (checkedInSnapshot) => {
+                const groupsData = groupSnapshot.val();
+                const checkedInData = checkedInSnapshot.val() || {}; // 如果沒有簽到資料，預設為空物件
+                displayGroups(groupsData, checkedInData);
+            });
+        });
+
+        // 顯示分組名單的函數
+        function displayGroups(groups, checkedInData) {
+            const groupListElem = document.getElementById('groupList');
+            groupListElem.innerHTML = ''; // 清空現有內容
+
+            if (!groups) {
+                groupListElem.innerHTML = '<p>沒有找到分組名單。</p>';
+                return;
+            }
+
+            // 將 groups 物件轉換為陣列並排序，確保順序正確
+            const sortedGroupKeys = Object.keys(groups).sort((a, b) => {
+                const numA = parseInt(a.replace('group', ''));
+                const numB = parseInt(b.replace('group', ''));
+                return numA - numB;
+            });
+
+            sortedGroupKeys.forEach(groupKey => {
+                const groupName = groupKey.replace('group', '第 ') + ' 組';
+                const members = groups[groupKey];
+
+                const groupCard = document.createElement('div');
+                groupCard.className = 'group-card';
+                groupCard.innerHTML = `<h3>${groupName}</h3><ul></ul>`;
+
+                const ul = groupCard.querySelector('ul');
+                members.forEach(memberName => {
+                    const li = document.createElement('li');
+                    li.textContent = memberName;
+
+                    // 檢查簽到狀態
+                    const isCheckedIn = checkedInData[memberName] === true;
+                    if (isCheckedIn) {
+                        li.classList.add('checked-in');
+                    }
+
+                    const checkinButton = document.createElement('button');
+                    checkinButton.className = 'checkin-btn';
+                    checkinButton.textContent = isCheckedIn ? '已簽到' : '簽到';
+                    checkinButton.disabled = isCheckedIn; // 如果已簽到，則禁用按鈕
+
+                    checkinButton.onclick = () => {
+                        if (!isCheckedIn) {
+                            // 更新資料庫中的簽到狀態
+                            checkedInRef.child(memberName).set(true)
+                                .then(() => {
+                                    console.log(`${memberName} 已簽到。`);
+                                })
+                                .catch(error => {
+                                    console.error(`簽到 ${memberName} 時發生錯誤:`, error);
+                                });
+                        }
+                    };
+                    li.appendChild(checkinButton);
+                    ul.appendChild(li);
+                });
+                groupListElem.appendChild(groupCard);
+            });
+        }
+    </script>
+</body>
+</html>
